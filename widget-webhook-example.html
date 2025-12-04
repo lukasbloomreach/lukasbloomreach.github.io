@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bloomreach Widget Webhook Example</title>
+    
+    <!-- 
+    ============================================================================
+    BLOOMREACH WIDGET WEBHOOK - MINIMAL EXAMPLE
+    ============================================================================
+    
+    This is a minimal, clean implementation of a Bloomreach Engagement Widget Webhook.
+    
+    WHAT IS A WIDGET WEBHOOK?
+    - Widget webhooks are IFRAMEs served by your web service
+    - They render a custom UI inside Bloomreach Engagement's Scenario editor
+    - They allow users to configure custom action nodes visually
+    - They communicate with Bloomreach using the postMessage API
+    
+    HOW TO USE THIS FILE:
+    1. Host this file on GitHub Pages or any HTTPS server
+    2. In Bloomreach: Data & Assets → Integrations → Create Webhook Preset
+    3. Select "Widget Webhook" as preset type
+    4. Paste your hosted URL as the Widget URL
+    5. Use the webhook in a scenario as an action node
+    
+    TESTING:
+    1. Add this webhook as an action node in a scenario
+    2. Configure the URL to point to https://webhook.site/your-unique-id
+    3. Save and test the webhook
+    4. Check webhook.site for incoming requests
+    
+    ============================================================================
+    -->
+    
+    <style>
+        /* 
+        ========================================
+        STYLES - Keep minimal for simplicity
+        ========================================
+        */
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #333;
+            padding: 20px;
+            background: #fafafa;
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #444;
+        }
+        
+        .hint {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #0066cc;
+            box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+        }
+        
+        textarea {
+            min-height: 120px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+        
+        .method-url-row {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .method-url-row select {
+            width: 100px;
+            flex-shrink: 0;
+        }
+        
+        .method-url-row input {
+            flex: 1;
+        }
+        
+        .status {
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .status.info {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+        
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        h2 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <!-- 
+    ========================================
+    STATUS DISPLAY
+    Shows connection status with Bloomreach
+    ========================================
+    -->
+    <div id="status" class="status info">
+        ⏳ Initializing widget...
+    </div>
+    
+    <!-- 
+    ========================================
+    WEBHOOK CONFIGURATION FORM
+    This form collects the webhook settings
+    that will be sent to Bloomreach
+    ========================================
+    -->
+    <h2>🔗 Webhook Configuration</h2>
+    
+    <div class="form-group">
+        <label>Request URL</label>
+        <div class="method-url-row">
+            <select id="method">
+                <option value="POST" selected>POST</option>
+                <option value="GET">GET</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+            </select>
+            <input 
+                type="url" 
+                id="url" 
+                placeholder="https://webhook.site/your-unique-id"
+                value="https://webhook.site/"
+            >
+        </div>
+        <div class="hint">
+            💡 Tip: Get a free test URL at <a href="https://webhook.site" target="_blank">webhook.site</a>
+        </div>
+    </div>
+    
+    <div class="form-group">
+        <label>Request Body (JSON)</label>
+        <textarea id="body" placeholder='{"key": "value"}'>{
+    "customer_id": "{{ customer.id }}",
+    "email": "{{ customer.email }}",
+    "timestamp": "{{ time }}"
+}</textarea>
+        <div class="hint">
+            💡 You can use Jinja2 templates like <code>{{ customer.email }}</code>
+        </div>
+    </div>
+    
+    <div class="form-group">
+        <label>Content Type</label>
+        <select id="contentType">
+            <option value="application/json" selected>application/json</option>
+            <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
+            <option value="text/plain">text/plain</option>
+        </select>
+    </div>
+
+    <script>
+        /*
+        ============================================================================
+        WIDGET WEBHOOK JAVASCRIPT - POSTMESSAGE COMMUNICATION
+        ============================================================================
+        
+        This script handles the communication between this widget (IFRAME) and
+        the Bloomreach Engagement application (parent window).
+        
+        COMMUNICATION FLOW:
+        
+        1. Widget loads → sends 'widget_hello' to App
+        2. App responds with 'app_hello' (contains saved webhook data if editing)
+        3. Widget initializes form → sends 'widget_initialized' to App
+        4. User edits the form...
+        5. User clicks Save in Bloomreach → App sends 'app_request_state'
+        6. Widget collects form data → sends 'widget_state' to App
+        7. If validation errors → App sends 'errors' message
+        
+        ============================================================================
+        */
+        
+        // ========================================
+        // CONFIGURATION
+        // ========================================
+        
+        /*
+        IMPORTANT: Set this to match your Bloomreach instance URL!
+        
+        Common values:
+        - Production EU: 'https://app.exponea.com'
+        - Production US: 'https://app-us1.exponea.com'
+        - CIS: 'https://app-cis.exponea.com'
+        
+        This is used for security - we only accept messages from this origin.
+        */
+        const APP_ORIGIN = 'https://app.exponea.com';
+        
+        // ========================================
+        // DOM ELEMENTS
+        // ========================================
+        
+        const statusEl = document.getElementById('status');
+        const methodEl = document.getElementById('method');
+        const urlEl = document.getElementById('url');
+        const bodyEl = document.getElementById('body');
+        const contentTypeEl = document.getElementById('contentType');
+        
+        // ========================================
+        // HELPER FUNCTIONS
+        // ========================================
+        
+        /**
+         * Updates the status display in the UI
+         * @param {string} message - Status message to display
+         * @param {string} type - One of: 'info', 'success', 'error'
+         */
+        function setStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+        
+        /**
+         * Logs a message to console with a colored prefix for easier debugging
+         * @param {string} label - Short label for the log
+         * @param {any} data - Data to log
+         * @param {string} color - Background color for the label
+         */
+        function log(label, data = '', color = '#333') {
+            console.log(`%c ${label} `, `background: ${color}; color: white; border-radius: 2px;`, data);
+        }
+        
+        // ========================================
+        // STEP 1: SEND 'widget_hello' TO APP
+        // ========================================
+        
+        /*
+        When the widget loads, we must tell Bloomreach that we're ready to communicate.
+        This is the first message in the handshake protocol.
+        
+        The message must include:
+        - min_supported_version: Minimum API version we support (always 1 for now)
+        - max_supported_version: Maximum API version we support (always 1 for now)
+        - message_type: Must be 'widget_hello'
+        */
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            log('STEP 1', 'Sending widget_hello to Bloomreach...', '#2196f3');
+            
+            window.parent.postMessage({
+                // Version fields are required for future compatibility
+                min_supported_version: 1,
+                max_supported_version: 1,
+                // This tells Bloomreach: "Hello, I'm a widget and I'm ready!"
+                message_type: 'widget_hello'
+            }, APP_ORIGIN);
+        });
+        
+        // ========================================
+        // MESSAGE HANDLER - RECEIVES MESSAGES FROM BLOOMREACH
+        // ========================================
+        
+        /*
+        This listener receives all messages from the parent window (Bloomreach).
+        We handle different message types:
+        
+        - 'app_hello': Bloomreach acknowledges us and sends any saved webhook data
+        - 'app_request_state': Bloomreach wants to save - we must send our form data
+        - 'errors': Bloomreach found validation errors in our data
+        */
+        
+        window.addEventListener('message', (event) => {
+            // ----------------------------------------
+            // SECURITY CHECK
+            // ----------------------------------------
+            // Only accept messages from our Bloomreach instance
+            // This prevents other sites from sending malicious messages
+            if (event.origin !== APP_ORIGIN) {
+                log('SECURITY', `Blocked message from unknown origin: ${event.origin}`, '#f44336');
+                return;
+            }
+            
+            // Get the message type to determine how to handle it
+            const { message_type } = event.data;
+            
+            log('RECEIVED', `Message type: ${message_type}`, '#9c27b0');
+            console.log('Full message data:', event.data);
+            
+            // ----------------------------------------
+            // STEP 2: HANDLE 'app_hello' FROM BLOOMREACH
+            // ----------------------------------------
+            if (message_type === 'app_hello') {
+                /*
+                Bloomreach has acknowledged our widget_hello.
+                
+                The event.data contains:
+                - version: API version being used (always 1)
+                - webhook: Saved webhook data (null if this is a new webhook)
+                - widget_state: Our custom saved state (null if new)
+                
+                If webhook is not null, we're editing an existing webhook
+                and should populate our form with the saved values.
+                */
+                
+                log('STEP 2', 'Received app_hello from Bloomreach', '#4caf50');
+                
+                // Check if we have existing webhook data to populate
+                const { webhook, widget_state } = event.data;
+                
+                if (webhook) {
+                    // We're editing an existing webhook - populate the form
+                    log('EDIT MODE', 'Populating form with saved data', '#ff9800');
+                    
+                    // Set HTTP method (GET, POST, etc.)
+                    if (webhook.method) {
+                        methodEl.value = webhook.method;
+                    }
+                    
+                    // Set the webhook URL
+                    if (webhook.url) {
+                        urlEl.value = webhook.url;
+                    }
+                    
+                    // Set the request body
+                    if (webhook.body) {
+                        bodyEl.value = webhook.body;
+                    }
+                    
+                    // Set content type from headers if available
+                    if (webhook.headers) {
+                        const contentTypeHeader = webhook.headers.find(
+                            h => h.name.toLowerCase() === 'content-type'
+                        );
+                        if (contentTypeHeader && contentTypeHeader.value) {
+                            contentTypeEl.value = contentTypeHeader.value;
+                        }
+                    }
+                    
+                    setStatus('✅ Loaded existing webhook configuration', 'success');
+                } else {
+                    // New webhook - use default values
+                    log('NEW MODE', 'Creating new webhook', '#2196f3');
+                    setStatus('✅ Ready to configure new webhook', 'success');
+                }
+                
+                // ----------------------------------------
+                // STEP 3: SEND 'widget_initialized' TO BLOOMREACH
+                // ----------------------------------------
+                /*
+                After we've set up the form (either with saved data or defaults),
+                we tell Bloomreach that we're ready for user interaction.
+                
+                This enables the Save button in Bloomreach's UI.
+                */
+                
+                log('STEP 3', 'Sending widget_initialized to Bloomreach', '#4caf50');
+                
+                window.parent.postMessage({
+                    message_type: 'widget_initialized'
+                }, APP_ORIGIN);
+            }
+            
+            // ----------------------------------------
+            // STEP 5: HANDLE 'app_request_state' FROM BLOOMREACH
+            // ----------------------------------------
+            else if (message_type === 'app_request_state') {
+                /*
+                The user clicked Save or Test in Bloomreach.
+                We must collect all form data and send it back.
+                
+                This is the most important message - it contains all the
+                webhook configuration that Bloomreach will use to make
+                HTTP requests when the scenario runs.
+                */
+                
+                log('STEP 5', 'Bloomreach requested our state - sending form data', '#ff9800');
+                
+                // Collect current form values
+                const method = methodEl.value;
+                const url = urlEl.value;
+                const body = bodyEl.value;
+                const contentType = contentTypeEl.value;
+                
+                // ----------------------------------------
+                // STEP 6: SEND 'widget_state' TO BLOOMREACH
+                // ----------------------------------------
+                /*
+                Build the webhook configuration object.
+                
+                Required fields:
+                - url: The endpoint to call
+                - method: HTTP method (GET, POST, etc.)
+                - body: Request body (Jinja2 template allowed)
+                - headers: Array of HTTP headers
+                - response_handling: How to handle response ('discard', 'text', 'json')
+                - general_consent: If true, uses general consent; if false, uses consent_category
+                
+                Optional fields:
+                - auth: Authentication configuration
+                - event_properties: Properties to track in campaign events
+                - frequency_policy: Frequency policy name
+                - consent_category: Specific consent category (if general_consent is false)
+                */
+                
+                const webhookState = {
+                    message_type: 'widget_state',
+                    
+                    // The webhook configuration that Bloomreach will execute
+                    webhook: {
+                        // Target URL for the HTTP request
+                        url: url,
+                        
+                        // HTTP method
+                        method: method,
+                        
+                        // Request body - can contain Jinja2 templates
+                        // Bloomreach will render these templates with customer data
+                        body: body,
+                        
+                        // HTTP headers to send with the request
+                        headers: [
+                            {
+                                name: 'Content-Type',
+                                value: contentType,
+                                type: 'public'  // 'public' = visible, 'secret' = hidden
+                            }
+                        ],
+                        
+                        // How to handle the response
+                        // 'discard' = ignore response
+                        // 'text' = store as plain text
+                        // 'json' = parse as JSON
+                        response_handling: 'discard',
+                        
+                        // Consent settings
+                        // When general_consent is true, the webhook respects
+                        // the customer's general consent status
+                        general_consent: true,
+                        consent_category: null,
+                        
+                        // Optional: Authentication (null if not using)
+                        auth: null,
+                        
+                        // Optional: Extra event properties to track
+                        event_properties: {},
+                        
+                        // Optional: Frequency policy name
+                        frequency_policy: ''
+                    },
+                    
+                    // widget_state: Your own custom state to save
+                    // This is optional - use it to store any extra data
+                    // you need to restore your widget's state later
+                    // Limited to 4KB when JSON serialized
+                    // DO NOT store secrets here!
+                    widget_state: null
+                };
+                
+                log('STEP 6', 'Sending widget_state to Bloomreach', '#4caf50');
+                console.log('Webhook configuration:', webhookState);
+                
+                window.parent.postMessage(webhookState, APP_ORIGIN);
+                
+                setStatus('📤 Sent configuration to Bloomreach', 'info');
+            }
+            
+            // ----------------------------------------
+            // HANDLE 'errors' FROM BLOOMREACH
+            // ----------------------------------------
+            else if (message_type === 'errors') {
+                /*
+                Bloomreach found validation errors in our webhook configuration.
+                The errors object contains details about what went wrong.
+                
+                Structure:
+                {
+                    errors: {
+                        webhook: {
+                            url: ['Error message'],
+                            headers: {
+                                0: { type: ['Error message'] }
+                            }
+                        }
+                    }
+                }
+                */
+                
+                log('ERRORS', 'Bloomreach reported validation errors', '#f44336');
+                console.error('Validation errors:', event.data.errors);
+                
+                setStatus('❌ Validation error - check console for details', 'error');
+            }
+            
+            // ----------------------------------------
+            // HANDLE 'app_reject' FROM BLOOMREACH
+            // ----------------------------------------
+            else if (message_type === 'app_reject') {
+                /*
+                Bloomreach rejected our widget because the API version
+                is not supported. This shouldn't happen with version 1.
+                */
+                
+                log('REJECTED', 'Widget version not supported by Bloomreach', '#f44336');
+                setStatus('❌ Widget version not supported', 'error');
+            }
+        });
+        
+        // ========================================
+        // HELPFUL CONSOLE MESSAGE
+        // ========================================
+        
+        console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║  BLOOMREACH WIDGET WEBHOOK - DEBUG MODE                       ║
+╠══════════════════════════════════════════════════════════════╣
+║  This widget communicates with: ${APP_ORIGIN.padEnd(28)}║
+║                                                               ║
+║  Communication flow:                                          ║
+║  1. Widget → App: widget_hello                                ║
+║  2. App → Widget: app_hello (with saved data)                 ║
+║  3. Widget → App: widget_initialized                          ║
+║  4. User edits form...                                        ║
+║  5. App → Widget: app_request_state                           ║
+║  6. Widget → App: widget_state (form data)                    ║
+║                                                               ║
+║  Watch this console for detailed logs!                        ║
+╚══════════════════════════════════════════════════════════════╝
+        `);
+    </script>
+</body>
+</html>
+
