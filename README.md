@@ -115,8 +115,8 @@ The widget and Bloomreach communicate via `postMessage`. Here's the flow:
 Update the `APP_ORIGIN` constant in the JavaScript:
 
 ```javascript
-// Production EU
-const APP_ORIGIN = 'https://app.exponea.com';
+// Production EU (default)
+const APP_ORIGIN = 'https://app.eu1.exponea.com';
 
 // Production US
 const APP_ORIGIN = 'https://app-us1.exponea.com';
